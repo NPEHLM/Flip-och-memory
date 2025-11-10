@@ -1,1 +1,871 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flipkort & Memory App</title>
+    <!-- Ladda Tailwind CSS för styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Använd Inter-fonten som standard -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
 
+        /* ----- Gemensam kort-styling (för både flashcard och memory) ----- */
+        .card-container {
+            perspective: 1000px;
+        }
+        .card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+        }
+        .card-container.is-flipped .card-inner,
+        .memory-card.is-flipped .card-inner {
+            transform: rotateY(180deg);
+        }
+        .card-front,
+        .card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            -webkit-backface-visibility: hidden; /* Safari */
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        .card-back {
+            transform: rotateY(180deg);
+        }
+
+        /* ----- Specifik styling för Flashcard ----- */
+        .flashcard-front {
+            /* Färg ställs in via JavaScript */
+        }
+        .flashcard-back {
+            /* Färg ställs in via JavaScript */
+        }
+
+        /* ----- Specifik styling för Memory ----- */
+        .memory-card {
+            aspect-ratio: 1 / 1; /* Gör korten kvadratiska */
+            cursor: pointer;
+        }
+        .memory-front {
+            @apply bg-white text-gray-800 text-sm sm:text-base;
+            /* Se till att texten inte blir för stor */
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
+        }
+        .memory-back {
+            @apply bg-blue-600; /* Fallback färg */
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+        /* Styling för matchade kort */
+        .memory-card.is-matched {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        /* ----- Knappar för val av spelare ----- */
+        .player-select-btn {
+            @apply px-4 py-2 border rounded-md text-sm font-medium transition-colors duration-150;
+        }
+        .player-select-btn.active {
+            @apply bg-blue-600 text-white border-blue-600;
+        }
+        .player-select-btn:not(.active) {
+            @apply bg-white text-gray-700 hover:bg-gray-50;
+        }
+        
+        /* ----- Markering för aktiv spelare ----- */
+        #playerScores li.active-player {
+            @apply font-bold text-blue-600;
+        }
+
+        /* ----- Laddningsindikator (Spinner) ----- */
+        #loadingSpinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #ffffff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        
+        /* ----- Styling för delningslänk ----- */
+        #shareLinkContainer input {
+            @apply w-full p-2 border border-gray-300 rounded-md bg-gray-100;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4 sm:p-8">
+
+    <div class="w-full max-w-2xl bg-white rounded-lg shadow-xl p-6 sm:p-8">
+        
+        <!-- =================================== -->
+        <!-- Steg 1: Importera Lista (eller ladda) -->
+        <!-- =================================== -->
+        <div id="importView">
+            <h1 class="text-2xl sm:text-3xl font-bold text-center text-gray-800 mb-6">Plugga med Flipkort & Memory</h1>
+            <p id="loadingSharedGameStatus" class="text-center text-lg text-blue-600 mb-4 hidden">Laddar delat spel...</p>
+            <div class="mb-4">
+                <label for="listInput" class="block text-sm font-medium text-gray-700 mb-2">Importera din ordlista</label>
+                <textarea id="listInput" rows="10" class="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" placeholder="Klistra in din lista här.
+Format:
+Ord,Definition
+Term,Förklaring
+..."></textarea>
+            </div>
+            <button id="importButton" class="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-md hover:bg-blue-700 transition duration-200">
+                Importera och starta
+            </button>
+            <p id="importStatus" class="text-red-500 text-sm mt-2 text-center"></p>
+        </div>
+
+        <!-- =================================== -->
+        <!-- Steg 2: Välj Läge -->
+        <!-- =================================== -->
+        <div id="modeSelectionView" class="hidden">
+            <h2 class="text-2xl font-bold text-center text-gray-800 mb-4">Välj ett läge</h2>
+            <p id="deckCount" class="text-center text-gray-600 mb-6">Du har importerat 0 ordpar.</p>
+            
+            <!-- Inställningar för färgval -->
+            <div class="mb-6 p-4 border rounded-md bg-gray-50">
+                <h3 class="text-lg font-medium text-gray-700 mb-3 text-center sm:text-left">Inställningar för Flipkort</h3>
+                <div class="flex flex-col sm:flex-row gap-4 justify-center sm:justify-start sm:gap-8">
+                    <div class="flex items-center justify-center gap-3">
+                        <label for="frontColorPicker" class="text-sm font-medium text-gray-600">Framsida:</label>
+                        <input type="color" id="frontColorPicker" value="#FFFFFF" class="w-10 h-10 rounded-md border border-gray-300 cursor-pointer p-0.5">
+                    </div>
+                    <div class="flex items-center justify-center gap-3">
+                        <label for="backColorPicker" class="text-sm font-medium text-gray-600">Baksida:</label>
+                        <input type="color" id="backColorPicker" value="#3B82F6" class="w-10 h-10 rounded-md border border-gray-300 cursor-pointer p-0.5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Inställningar för Memory -->
+            <div class="mb-6 p-4 border rounded-md bg-gray-50">
+                <h3 class="text-lg font-medium text-gray-700 mb-3 text-center sm:text-left">Inställningar för Memory</h3>
+                <div class="flex flex-wrap justify-center sm:justify-start gap-2">
+                    <button class="player-select-btn" data-players="1">1 Spelare</button>
+                    <button class="player-select-btn" data-players="2">2 Spelare</button>
+                    <button class="player-select-btn" data-players="3">3 Spelare</button>
+                    <button class="player-select-btn" data-players="4">4 Spelare</button>
+                </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-4">
+                <button id="startFlashcardButton" class="flex-1 bg-green-600 text-white font-semibold py-3 px-4 rounded-md hover:bg-green-700 transition duration-200">
+                    Starta Flipkort
+                </button>
+                <button id="startMemoryButton" class="flex-1 bg-purple-600 text-white font-semibold py-3 px-4 rounded-md hover:bg-purple-700 transition duration-200">
+                    Starta Memory
+                </button>
+            </div>
+
+            <!-- NYTT: Dela-funktion -->
+            <div class="mt-6 border-t pt-6">
+                <button id="shareGameButton" class="w-full bg-gray-700 text-white font-semibold py-3 px-4 rounded-md hover:bg-gray-800 transition duration-200">
+                    Dela den här ordlistan
+                </button>
+                <div id="shareLinkContainer" class="hidden mt-4 space-y-2">
+                    <label class="block text-sm font-medium text-gray-700">Dela denna länk:</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="shareLinkInput" readonly class="flex-1">
+                        <button id="copyShareLinkButton" class="bg-blue-500 text-white px-3 py-2 rounded-md text-sm hover:bg-blue-600">Kopiera</button>
+                    </div>
+                    <p id="copyStatus" class="text-sm text-green-600"></p>
+                </div>
+            </div>
+            
+            <button id="goBackToImport" class="w-full text-blue-600 hover:text-blue-800 text-sm mt-6 text-center">
+                Importera en ny lista
+            </button>
+        </div>
+
+        <!-- =================================== -->
+        <!-- Steg 3: Flipkort-läge -->
+        <!-- =================================== -->
+        <div id="flashcardView" class="hidden">
+            <button class="goBackToModes text-blue-600 hover:text-blue-800 text-sm mb-4">&larr; Välj annat läge</button>
+            <h2 class="text-2xl font-bold text-center text-gray-800 mb-4">Flipkort</h2>
+            
+            <div id="flashcard" class="card-container w-full h-64 sm:h-80 mb-4 cursor-pointer">
+                <div class="card-inner">
+                    <div id="cardFront" class="card-front flashcard-front text-2xl sm:text-3xl font-medium">Framside-text</div>
+                    <div id="cardBack" class="card-back flashcard-back text-xl sm:text-2xl">Baksida-text</div>
+                </div>
+            </div>
+
+            <p id="cardProgress" class="text-center text-gray-600 mb-4">Kort 1 av 10</p>
+            <div class="flex justify-between">
+                <button id="prevCardButton" class="bg-gray-200 text-gray-800 font-semibold py-2 px-6 rounded-md hover:bg-gray-300 transition duration-200">
+                    Föregående
+                </button>
+                <button id="nextCardButton" class="bg-gray-200 text-gray-800 font-semibold py-2 px-6 rounded-md hover:bg-gray-300 transition duration-200">
+                    Nästa
+                </button>
+            </div>
+        </div>
+
+        <!-- =================================== -->
+        <!-- Steg 4: Memory-läge -->
+        <!-- =================================== -->
+        <div id="memoryGameView" class="hidden relative">
+            <button class="goBackToModes text-blue-600 hover:text-blue-800 text-sm mb-4">&larr; Välj annat läge</button>
+            
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Memory</h2>
+                    <p id="playerTurnStatus" class="text-lg text-blue-600 font-medium"></p>
+                </div>
+                <div class="w-full sm:w-auto">
+                    <p id="memoryStatus" class="text-gray-600 font-medium text-left sm:text-right">Antal försök: 0</p>
+                    <ul id="playerScores" class="text-gray-600 text-left sm:text-right">
+                        <!-- Poäng läggs till av JavaScript -->
+                    </ul>
+                </div>
+            </div>
+
+            <div id="memoryGrid" class="grid grid-cols-3 sm:grid-cols-4 gap-2 sm:gap-4">
+                <!-- Korten genereras av JavaScript -->
+            </div>
+            
+            <div id="winMessage" class="hidden text-center mt-4">
+                <h3 class="text-2xl font-bold text-green-600">Grattis, du klarade det!</h3>
+                <p id="winStats" class="text-lg text-gray-700"></p>
+                <button id="playAgainButton" class="mt-4 bg-blue-600 text-white font-semibold py-2 px-5 rounded-md hover:bg-blue-700 transition duration-200">
+                    Spela igen
+                </button>
+            </div>
+
+            <div id="loadingIndicator" class="hidden absolute inset-0 bg-gray-800 bg-opacity-75 flex flex-col items-center justify-center rounded-lg z-10">
+                <div id="loadingSpinner"></div>
+                <p class="text-white text-lg font-medium mt-4">Genererar bilder, vänligen vänta...</p>
+                <p id="loadingError" class="text-red-300 text-sm mt-2"></p>
+            </div>
+        </div>
+
+    </div>
+
+    <script type="module">
+        // NYTT: Firebase-importer
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, collection, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Globala variabler för appens tillstånd
+        let allViews = [];
+        let cards = []; // Lagrar { term, definition }
+        let memoryCards = []; // Lagrar { type, value, pairId, matched }
+        let currentFlashcardIndex = 0;
+
+        // Variabler för Memory-spelet
+        let selectedMemoryCards = [];
+        let memoryAttempts = 0;
+        let matchedPairs = 0;
+        let numPlayers = 1;
+        let currentPlayer = 1;
+        let playerScores = [];
+
+        // NYTT: Firebase-variabler
+        let db, auth, appId, userId;
+
+        // DOM-element
+        const importView = document.getElementById('importView');
+        const modeSelectionView = document.getElementById('modeSelectionView');
+        const flashcardView = document.getElementById('flashcardView');
+        const memoryGameView = document.getElementById('memoryGameView');
+        
+        const listInput = document.getElementById('listInput');
+        const importButton = document.getElementById('importButton');
+        const importStatus = document.getElementById('importStatus');
+        const loadingSharedGameStatus = document.getElementById('loadingSharedGameStatus');
+        
+        const deckCount = document.getElementById('deckCount');
+        const startFlashcardButton = document.getElementById('startFlashcardButton');
+        const startMemoryButton = document.getElementById('startMemoryButton');
+        const goBackToImport = document.getElementById('goBackToImport');
+        const goBackToModesButtons = document.querySelectorAll('.goBackToModes');
+
+        // ... (resten av DOM-elementen)
+        const flashcard = document.getElementById('flashcard');
+        const cardFront = document.getElementById('cardFront');
+        const cardBack = document.getElementById('cardBack');
+        const cardProgress = document.getElementById('cardProgress');
+        const prevCardButton = document.getElementById('prevCardButton');
+        const nextCardButton = document.getElementById('nextCardButton');
+
+        const memoryGrid = document.getElementById('memoryGrid');
+        const memoryStatus = document.getElementById('memoryStatus');
+        const playerTurnStatus = document.getElementById('playerTurnStatus');
+        const playerScoresElement = document.getElementById('playerScores');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const loadingError = document.getElementById('loadingError');
+        const winMessage = document.getElementById('winMessage');
+        const winStats = document.getElementById('winStats');
+        const playAgainButton = document.getElementById('playAgainButton');
+
+        const frontColorPicker = document.getElementById('frontColorPicker');
+        const backColorPicker = document.getElementById('backColorPicker');
+        
+        const playerSelectButtons = document.querySelectorAll('.player-select-btn');
+
+        // NYTT: DOM-element för delning
+        const shareGameButton = document.getElementById('shareGameButton');
+        const shareLinkContainer = document.getElementById('shareLinkContainer');
+        const shareLinkInput = document.getElementById('shareLinkInput');
+        const copyShareLinkButton = document.getElementById('copyShareLinkButton');
+        const copyStatus = document.getElementById('copyStatus');
+
+
+        /**
+         * Initierar appen, Firebase och sätter upp händelselyssnare
+         */
+        async function initialize() {
+            // 1. Initiera Firebase
+            try {
+                // Använd globala variabler från Canvas-miljön
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                setLogLevel('Debug'); // För felsökning
+            } catch (error) {
+                console.error("Kunde inte initiera Firebase:", error);
+                importStatus.textContent = "Databasanslutning misslyckades. Kan inte dela spel.";
+            }
+
+            // 2. Autentisera
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                userId = auth.currentUser ? auth.currentUser.uid : 'anonymous-user';
+                console.log("Autentiserad användare:", userId);
+            } catch (error) {
+                console.error("Firebase Auth Error:", error);
+                importStatus.textContent = "Autentisering misslyckades. Dela-funktioner är inaktiverade.";
+                userId = 'auth-error-user';
+            }
+
+            // 3. Sätt upp vyer och lyssnare
+            allViews = [importView, modeSelectionView, flashcardView, memoryGameView];
+            importButton.addEventListener('click', importList);
+            goBackToImport.addEventListener('click', () => showView('importView'));
+            goBackToModesButtons.forEach(btn => btn.addEventListener('click', () => showView('modeSelectionView')));
+
+            startFlashcardButton.addEventListener('click', setupFlashcardGame);
+            startMemoryButton.addEventListener('click', setupMemoryGame);
+            
+            playerSelectButtons.forEach(btn => {
+                btn.addEventListener('click', selectNumPlayers);
+                if (btn.dataset.players === '1') {
+                    btn.classList.add('active'); // Standardval 1 spelare
+                }
+            });
+
+            flashcard.addEventListener('click', () => flashcard.classList.toggle('is-flipped'));
+            prevCardButton.addEventListener('click', showPrevCard);
+            nextCardButton.addEventListener('click', showNextCard);
+            playAgainButton.addEventListener('click', setupMemoryGame);
+
+            // NYA Lyssnare för delning
+            shareGameButton.addEventListener('click', shareGame);
+            copyShareLinkButton.addEventListener('click', copyShareLink);
+            
+            // 4. Kontrollera om ett spel ska laddas från URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const gameId = urlParams.get('gameId');
+
+            if (gameId) {
+                await loadSharedGame(gameId);
+            } else {
+                showView('importView');
+            }
+        }
+
+        /**
+         * NY: Laddar ett delat spel från Firestore
+         * @param {string} gameId - ID för spelet som ska laddas
+         */
+        async function loadSharedGame(gameId) {
+            showView('importView'); // Visa importvyn medan vi laddar
+            loadingSharedGameStatus.classList.remove('hidden');
+            importStatus.textContent = '';
+
+            try {
+                // Sökväg till allmän data
+                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'sharedGames', gameId);
+                const gameSnap = await getDoc(gameRef);
+
+                if (gameSnap.exists()) {
+                    const gameData = gameSnap.data();
+                    if (gameData.cardsList) {
+                        cards = gameData.cardsList; // Ladda den sparade ordlistan
+                        deckCount.textContent = `Du har laddat ${cards.length} ordpar.`;
+                        showView('modeSelectionView'); // Gå direkt till val av läge
+                    } else {
+                        throw new Error("Delat spel saknar data.");
+                    }
+                } else {
+                    throw new Error("Inget spel hittades med det ID:t.");
+                }
+            } catch (error) {
+                console.error("Kunde inte ladda delat spel:", error);
+                loadingSharedGameStatus.classList.add('hidden');
+                importStatus.textContent = "Kunde inte ladda det delade spelet. Starta ett nytt.";
+                // Låter användaren vara kvar på importvyn
+            }
+        }
+
+        /**
+         * NY: Sparar det nuvarande spelet till Firestore och visar en länk
+         */
+        async function shareGame() {
+            if (!db || !userId) {
+                copyStatus.textContent = "Kan inte dela: ingen databasanslutning.";
+                copyStatus.className = "text-sm text-red-600";
+                return;
+            }
+
+            shareGameButton.disabled = true;
+            shareGameButton.textContent = "Sparar...";
+
+            try {
+                // Spara i en allmän samling
+                const gamesCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGames');
+                
+                const gameData = { 
+                    cardsList: cards, 
+                    createdAt: serverTimestamp(),
+                    createdBy: userId
+                };
+                
+                const docRef = await addDoc(gamesCollectionRef, gameData);
+                const newGameId = docRef.id;
+
+                // Skapa och visa den delbara länken
+                const shareUrl = `${window.location.href.split('?')[0]}?gameId=${newGameId}`;
+                shareLinkInput.value = shareUrl;
+                shareLinkContainer.classList.remove('hidden');
+                copyStatus.textContent = "";
+
+            } catch (error) {
+                console.error("Kunde inte dela spelet:", error);
+                copyStatus.textContent = "Ett fel uppstod vid delning.";
+                copyStatus.className = "text-sm text-red-600";
+            } finally {
+                shareGameButton.disabled = false;
+                shareGameButton.textContent = "Dela den här ordlistan";
+            }
+        }
+
+        /**
+         * NY: Kopierar delningslänken till urklipp
+         */
+        function copyShareLink() {
+            shareLinkInput.select();
+            shareLinkInput.setSelectionRange(0, 99999); // För mobila enheter
+
+            try {
+                // Använd document.execCommand för kompatibilitet
+                document.execCommand('copy');
+                copyStatus.textContent = "Länk kopierad!";
+                copyStatus.className = "text-sm text-green-600";
+            } catch (err) {
+                console.error('Kunde inte kopiera länk:', err);
+                copyStatus.textContent = "Kunde inte kopiera. Markera och kopiera manuellt.";
+                copyStatus.className = "text-sm text-red-600";
+            }
+        }
+
+
+        /**
+         * Hjälpfunktion för att visa en specifik vy och dölja alla andra
+         * @param {string} viewId - ID:t för vyn som ska visas
+         */
+        function showView(viewId) {
+            allViews.forEach(view => view.classList.add('hidden'));
+            const viewToShow = document.getElementById(viewId);
+            if (viewToShow) {
+                viewToShow.classList.remove('hidden');
+            }
+            // Återställ specifika vyer när de visas
+            if (viewId === 'importView') {
+                listInput.value = '';
+                importStatus.textContent = '';
+                loadingSharedGameStatus.classList.add('hidden');
+                // Rensa inte 'cards' här, det kan ha laddats från URL
+            }
+            if (viewId === 'memoryGameView') {
+                winMessage.classList.add('hidden');
+            }
+            if (viewId === 'modeSelectionView') {
+                shareLinkContainer.classList.add('hidden'); // Dölj delningslänken
+                copyStatus.textContent = '';
+            }
+        }
+
+        /**
+         * Hanterar val av antal spelare
+         * @param {Event} event 
+         */
+        function selectNumPlayers(event) {
+            playerSelectButtons.forEach(btn => btn.classList.remove('active'));
+            const selectedButton = event.currentTarget;
+            selectedButton.classList.add('active');
+            numPlayers = parseInt(selectedButton.dataset.players, 10);
+        }
+
+        /**
+         * Läser in och parsar den inmatade listan från textarean
+         */
+        function importList() {
+            const text = listInput.value;
+            if (!text.trim()) {
+                importStatus.textContent = 'Inget innehåll. Klistra in din lista.';
+                return;
+            }
+
+            cards = text.split('\n')
+                .filter(line => line.trim() !== '')
+                .map(line => {
+                    const parts = line.split(',');
+                    if (parts.length >= 2) {
+                        const term = parts[0].trim();
+                        const definition = parts.slice(1).join(',').trim();
+                        return { term, definition };
+                    }
+                    return null;
+                })
+                .filter(card => card !== null && card.term && card.definition);
+
+            if (cards.length === 0) {
+                importStatus.textContent = 'Kunde inte hitta några giltiga ordpar. Kontrollera formatet (Ord,Definition).';
+            } else {
+                deckCount.textContent = `Du har importerat ${cards.length} ordpar.`;
+                showView('modeSelectionView');
+            }
+        }
+
+        /**
+         * Bestämmer om texten ska vara ljus eller mörk baserat på bakgrundsfärgen.
+         * @param {string} hexcolor - Bakgrundsfärgen i hex-format
+         * @returns {string} - Textfärg i hex-format
+         */
+        function getContrastColor(hexcolor) {
+            if (hexcolor.startsWith('#')) {
+                hexcolor = hexcolor.slice(1);
+            }
+            let r, g, b;
+            if (hexcolor.length === 3) {
+                r = parseInt(hexcolor.substring(0, 1).repeat(2), 16);
+                g = parseInt(hexcolor.substring(1, 2).repeat(2), 16);
+                b = parseInt(hexcolor.substring(2, 3).repeat(2), 16);
+            } else if (hexcolor.length === 6) {
+                r = parseInt(hexcolor.substring(0, 2), 16);
+                g = parseInt(hexcolor.substring(2, 4), 16);
+                b = parseInt(hexcolor.substring(4, 6), 16);
+            } else {
+                return '#111827';
+            }
+            
+            const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+            return (yiq >= 150) ? '#111827' : '#FFFFFF';
+        }
+
+        // ----------------------------------------
+        // FLIPKORT-LOGIK
+        // ----------------------------------------
+        function setupFlashcardGame() {
+            currentFlashcardIndex = 0;
+            flashcard.classList.remove('is-flipped');
+
+            const frontBgColor = frontColorPicker.value;
+            const backBgColor = backColorPicker.value;
+            const frontTextColor = getContrastColor(frontBgColor);
+            const backTextColor = getContrastColor(backBgColor);
+
+            cardFront.style.backgroundColor = frontBgColor;
+            cardFront.style.color = frontTextColor;
+            cardBack.style.backgroundColor = backBgColor;
+            cardBack.style.color = backTextColor;
+
+            updateFlashcard();
+            showView('flashcardView');
+        }
+
+        function updateFlashcard() {
+            if (cards.length === 0) return;
+            const card = cards[currentFlashcardIndex];
+            cardFront.textContent = card.term;
+            cardBack.textContent = card.definition;
+            cardProgress.textContent = `Kort ${currentFlashcardIndex + 1} av ${cards.length}`;
+            
+            prevCardButton.disabled = currentFlashcardIndex === 0;
+            prevCardButton.classList.toggle('opacity-50', prevCardButton.disabled);
+            nextCardButton.disabled = currentFlashcardIndex === cards.length - 1;
+            nextCardButton.classList.toggle('opacity-50', nextCardButton.disabled);
+        }
+
+        function showPrevCard() {
+            if (currentFlashcardIndex > 0) {
+                currentFlashcardIndex--;
+                flashcard.classList.remove('is-flipped');
+                updateFlashcard();
+            }
+        }
+
+        function showNextCard() {
+            if (currentFlashcardIndex < cards.length - 1) {
+                currentFlashcardIndex++;
+                flashcard.classList.remove('is-flipped');
+                updateFlashcard();
+            }
+        }
+
+        // ----------------------------------------
+        // MEMORY-LOGIK
+        // ----------------------------------------
+        async function setupMemoryGame() {
+            showView('memoryGameView');
+            loadingIndicator.classList.remove('hidden');
+            loadingError.textContent = '';
+            memoryGrid.innerHTML = '';
+            winMessage.classList.add('hidden');
+            
+            memoryAttempts = 0;
+            matchedPairs = 0;
+            selectedMemoryCards = [];
+            currentPlayer = 1;
+            playerScores = new Array(numPlayers).fill(0);
+            updateMemoryStatusUI();
+
+            const themeTerms = cards.map(c => c.term).slice(0, 5).join(', ');
+            const imagePrompt = `En enkel, färgstark ikon som representerar temat '${themeTerms}'. Minimalistisk, platt design, på en vit bakgrund.`;
+            
+            let imageUrl = null;
+            try {
+                imageUrl = await generateImage(imagePrompt);
+                if (!imageUrl) throw new Error("Bilden kunde inte genereras.");
+            } catch (error) {
+                console.error('Image generation failed:', error);
+                loadingError.textContent = 'Kunde inte ladda bild. Använder standard-baksida.';
+            }
+            
+            createMemoryDeck();
+            populateMemoryGrid(imageUrl);
+            
+            loadingIndicator.classList.add('hidden');
+        }
+        
+        function createMemoryDeck() {
+            memoryCards = [];
+            cards.forEach((pair, index) => {
+                memoryCards.push({ type: 'term', value: pair.term, pairId: index, matched: false });
+                memoryCards.push({ type: 'definition', value: pair.definition, pairId: index, matched: false });
+            });
+            for (let i = memoryCards.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [memoryCards[i], memoryCards[j]] = [memoryCards[j], memoryCards[i]];
+            }
+        }
+
+        function populateMemoryGrid(imageUrl) {
+            memoryGrid.innerHTML = '';
+            const backStyle = imageUrl 
+                ? `background-image: url(${imageUrl})`
+                : 'background-color: #4f46e5';
+
+            memoryCards.forEach((cardData, index) => {
+                const cardEl = document.createElement('div');
+                cardEl.className = 'memory-card card-container is-flipped';
+                cardEl.dataset.index = index;
+
+                cardEl.innerHTML = `
+                    <div class="card-inner">
+                        <div class="card-front memory-front">${cardData.value}</div>
+                        <div class="card-back memory-back" style="${backStyle}"></div>
+                    </div>
+                `;
+                
+                cardEl.addEventListener('click', () => onMemoryCardClick(cardEl));
+                memoryGrid.appendChild(cardEl);
+            });
+        }
+
+        function onMemoryCardClick(cardEl) {
+            const index = parseInt(cardEl.dataset.index);
+            const cardData = memoryCards[index];
+
+            if (cardData.matched || selectedMemoryCards.length === 2 || selectedMemoryCards.find(c => c.index === index)) {
+                return;
+            }
+
+            cardEl.classList.remove('is-flipped');
+            selectedMemoryCards.push({ element: cardEl, data: cardData, index: index });
+
+            if (selectedMemoryCards.length === 2) {
+                memoryAttempts++;
+                memoryStatus.textContent = `Antal försök: ${memoryAttempts}`;
+                checkMemoryMatch();
+            }
+        }
+        
+        function checkMemoryMatch() {
+            const [first, second] = selectedMemoryCards;
+
+            if (first.data.pairId === second.data.pairId) {
+                first.data.matched = true;
+                second.data.matched = true;
+                first.element.classList.add('is-matched');
+                second.element.classList.add('is-matched');
+                matchedPairs++;
+                selectedMemoryCards = [];
+                
+                playerScores[currentPlayer - 1]++;
+                
+                if (matchedPairs === cards.length) {
+                    setTimeout(showWinScreen, 500);
+                } else {
+                    updateMemoryStatusUI();
+                }
+            } else {
+                setTimeout(() => {
+                    first.element.classList.add('is-flipped');
+                    second.element.classList.add('is-flipped');
+                    selectedMemoryCards = [];
+                    
+                    if (numPlayers > 1) {
+                        currentPlayer = (currentPlayer % numPlayers) + 1;
+                        updateMemoryStatusUI();
+                    }
+                }, 1200);
+            }
+        }
+        
+        function updateMemoryStatusUI() {
+            memoryStatus.textContent = `Antal försök: ${memoryAttempts}`;
+            
+            if (numPlayers > 1) {
+                playerTurnStatus.textContent = `Spelare ${currentPlayer}s tur`;
+                playerScoresElement.innerHTML = playerScores
+                    .map((score, index) => {
+                        const isActive = (index + 1 === currentPlayer);
+                        return `<li class="${isActive ? 'active-player' : ''}">Spelare ${index + 1}: ${score} poäng</li>`;
+                    })
+                    .join('');
+            } else {
+                playerTurnStatus.textContent = '';
+                playerScoresElement.innerHTML = '';
+            }
+        }
+
+        function showWinScreen() {
+            if (numPlayers === 1) {
+                winStats.textContent = `Du klarade det på ${memoryAttempts} försök!`;
+            } else {
+                const maxScore = Math.max(...playerScores);
+                const winners = [];
+                playerScores.forEach((score, index) => {
+                    if (score === maxScore) {
+                        winners.push(`Spelare ${index + 1}`);
+                    }
+                });
+                
+                if (winners.length > 1) {
+                    winStats.textContent = `Det blev oavgjort mellan ${winners.join(' och ')} med ${maxScore} poäng!`;
+                } else {
+                    winStats.textContent = `${winners[0]} vinner med ${maxScore} poäng!`;
+                }
+            }
+            winMessage.classList.remove('hidden');
+        }
+
+        // ----------------------------------------
+        // BILDGENERERINGS-API (IMAGEN)
+        // ----------------------------------------
+        async function generateImage(prompt) {
+            const apiKey = ""; // Fylls i av Canvas
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+            
+            const payload = {
+                instances: [{ "prompt": prompt }],
+                parameters: { "sampleCount": 1 }
+            };
+
+            try {
+                const response = await fetchWithBackoff(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`API-anrop misslyckades med status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                if (result.predictions && result.predictions.length > 0 && result.predictions[0].bytesBase64Encoded) {
+                    return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+                } else {
+                    console.error("Inget giltigt bildsvar från API:et:", result);
+                    return null;
+                }
+            } catch (error) {
+                console.error("Fel vid bildgenerering:", error);
+                return null;
+            }
+        }
+
+        async function fetchWithBackoff(url, options, retries = 4, delay = 1000) {
+            try {
+                const response = await fetch(url, options);
+                if (response.status === 429 && retries > 0) {
+                    // Inte logga i konsolen, vänta och försök igen
+                    await new Promise(res => setTimeout(res, delay));
+                    return fetchWithBackoff(url, options, retries - 1, delay * 2);
+                }
+                return response;
+            } catch (error) {
+                if (retries > 0) {
+                    await new Promise(res => setTimeout(res, delay));
+                    return fetchWithBackoff(url, options, retries - 1, delay * 2);
+                } else {
+                    throw error;
+                }
+            }
+        }
+
+        // Starta applikationen
+        initialize();
+
+    </script>
+</body>
+</html>
