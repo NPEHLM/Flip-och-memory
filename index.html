@@ -344,36 +344,7 @@ Term,Förklaring
          * Initierar appen, Firebase och sätter upp händelselyssnare
          */
         async function initialize() {
-            // 1. Initiera Firebase
-            try {
-                // Använd globala variabler från Canvas-miljön
-                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                setLogLevel('Debug'); // För felsökning
-            } catch (error) {
-                console.error("Kunde inte initiera Firebase:", error);
-                importStatus.textContent = "Databasanslutning misslyckades. Kan inte dela spel.";
-            }
-
-            // 2. Autentisera
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-                userId = auth.currentUser ? auth.currentUser.uid : 'anonymous-user';
-                console.log("Autentiserad användare:", userId);
-            } catch (error) {
-                console.error("Firebase Auth Error:", error);
-                importStatus.textContent = "Autentisering misslyckades. Dela-funktioner är inaktiverade.";
-                userId = 'auth-error-user';
-            }
-
-            // 3. Sätt upp vyer och lyssnare
+            // 1. Sätt upp vyer och lokala lyssnare (dessa fungerar alltid)
             allViews = [importView, modeSelectionView, flashcardView, memoryGameView];
             importButton.addEventListener('click', importList);
             goBackToImport.addEventListener('click', () => showView('importView'));
@@ -397,8 +368,46 @@ Term,Förklaring
             // NYA Lyssnare för delning
             shareGameButton.addEventListener('click', shareGame);
             copyShareLinkButton.addEventListener('click', copyShareLink);
+
+            // 2. Kontrollera om Firebase-variabler finns
+            const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+            appId = typeof __app_id !== 'undefined' ? __app_id : null;
+
+            if (!firebaseConfigStr || !appId) {
+                console.warn("Firebase config saknas. Dela-funktioner inaktiveras.");
+                importStatus.textContent = "Dela-funktioner är inte tillgängliga i den här miljön.";
+                shareGameButton.disabled = true;
+                shareGameButton.textContent = "Delning är inaktiverad";
+                showView('importView'); // Gå till importvyn, ingen gameId-laddning
+                return; // Avsluta initieringen av Firebase
+            }
+
+            // 3. Initiera Firebase och Autentisera
+            try {
+                const firebaseConfig = JSON.parse(firebaseConfigStr);
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                setLogLevel('Debug'); // För felsökning
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                userId = auth.currentUser ? auth.currentUser.uid : 'anonymous-user';
+                console.log("Autentiserad användare:", userId);
+
+            } catch (error) {
+                console.error("Kunde inte initiera Firebase eller autentisera:", error);
+                importStatus.textContent = "Databasanslutning misslyckades. Kan inte dela spel.";
+                shareGameButton.disabled = true;
+                shareGameButton.textContent = "Delning misslyckades";
+                showView('importView');
+                return;
+            }
             
-            // 4. Kontrollera om ett spel ska laddas från URL
+            // 4. Kontrollera om ett spel ska laddas från URL (nu när vi VET att db finns)
             const urlParams = new URLSearchParams(window.location.search);
             const gameId = urlParams.get('gameId');
 
